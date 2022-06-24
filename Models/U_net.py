@@ -1,5 +1,6 @@
 from Models import BaseModel
 import torch
+import torchvision
 from torch import nn
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
@@ -12,30 +13,32 @@ class PlottingCallback(Callback):
         self.dataloader = dataloader
 
     def on_train_epoch_end(self, trainer, pl_module):
-        image, label = next(iter(self.dataloader))
-        output = pl_module.forward(image.cuda())
-        output = output[0,0].cpu().detach().numpy()
-        image = image[0,0].cpu().detach().numpy()
+        if trainer.current_epoch % 10 == 0:
+            image, label = next(iter(self.dataloader))
+            output = pl_module.forward(image.cuda())
 
-        colors = [(0, 0, 0), (0, 1, 0)] # first color is black, last is red
-        cm = LinearSegmentedColormap.from_list(
-            "Custom", colors, N=100)
-        fig = plt.figure(figsize=(10,10))
-        plt.imshow(image, cmap='gray')
-        # plt.imshow(output, alpha=0.5, cmap=cm)
-        plt.imshow(output, alpha=0.5, cmap='gnuplot2')
-        fig.savefig('output.png')
-        plt.close()
+            image_m = torchvision.utils.make_grid(image, 5)
+            output_m = torchvision.utils.make_grid(output, 5)
+            image_m = image_m.cpu().detach().numpy()[0]
+            output_m = output_m.cpu().detach().numpy()[0]
+
+            fig = plt.figure(figsize=(14,14))
+            plt.imshow(image_m, cmap='gray')
+            plt.imshow(output_m, cmap='gnuplot2', alpha=0.5)
+            plt.axis('off')
+            plt.tight_layout()
+            fig.savefig(f'Cell_detection.png')
+            plt.close()
 
 class Encoder(torch.nn.Module):
     def __init__(self, c_in, c_out, ksize):
         super().__init__()
         self.conv_1 = nn.Sequential(
-            nn.Conv2d(c_in, c_out, ksize),
+            nn.Conv2d(c_in, c_out, ksize, padding=ksize // 2),
             nn.LeakyReLU()
         )
         self.conv_2 = nn.Sequential(
-            nn.Conv2d(c_out, c_out, ksize),
+            nn.Conv2d(c_out, c_out, ksize, padding=ksize // 2),
             nn.LeakyReLU(),
          )
         self.pool = nn.MaxPool2d(2, return_indices=True)
@@ -53,11 +56,11 @@ class Decoder(torch.nn.Module):
 
         self.unpool = nn.MaxUnpool2d(2)
         self.upconv_1 = nn.Sequential(
-            nn.ConvTranspose2d(c_in, c_out, ksize),
+            nn.ConvTranspose2d(c_in, c_out, ksize, padding=ksize // 2),
             nn.LeakyReLU()
         )
         self.upconv_2 = nn.Sequential(
-            nn.ConvTranspose2d(c_out, c_out, ksize),
+            nn.ConvTranspose2d(c_out, c_out, ksize, padding=ksize // 2),
             nn.LeakyReLU()
         )
 
@@ -71,10 +74,13 @@ class U_net(BaseModel):
 
     def __init__(self, img_size, learning_rate):
         super().__init__(img_size, learning_rate)
-        self.enc_1 = Encoder(1, 9, 9)
-        self.enc_2 = Encoder(9, 18, 5)
-        self.dec_2 = Decoder(18, 9, 5)
-        self.dec_1 = Decoder(9, 1, 9)
+        self.enc_1 = Encoder(1, 9, 3)
+        self.enc_2 = Encoder(9, 18, 3)
+        self.enc_3 = Encoder(18, 36, 3)
+
+        self.dec_3 = Decoder(36, 18, 3)
+        self.dec_2 = Decoder(18, 9, 3)
+        self.dec_1 = Decoder(9, 1, 3)
         self.smoother = nn.Sequential(
             nn.Conv2d(1,3,3, padding=1),
             nn.LeakyReLU(),
@@ -82,9 +88,8 @@ class U_net(BaseModel):
             nn.LeakyReLU(),
         )
         self.output_function = nn.LeakyReLU()
-        self.batch_size = 10
         self.save_hyperparameters()
-        self.example_input_array = torch.rand([1,1,200,200])
+        self.example_input_array = torch.rand([1,1,img_size[0],img_size[1]])
 
     def loss(self, output, target):
         loss_1 = torch.mean(torch.square(output[target == 0] - target[target == 0]))
@@ -93,11 +98,14 @@ class U_net(BaseModel):
         return loss 
 
     def forward(self, x):
-        y1, z1 = self.enc_1(x)
-        y2, z2 = self.enc_2(y1)
-        y3 = self.dec_2(y2, z2)
-        y4 = self.dec_1(y3+y1, z1)
-        y = self.output_function(y4)
+        ey1, z1 = self.enc_1(x)
+        ey2, z2 = self.enc_2(ey1)
+        ey3, z3 = self.enc_3(ey2)
+ 
+        dy3 = self.dec_3(ey3, z3)
+        dy2 = self.dec_2(dy3 + ey2, z2)
+        dy1 = self.dec_1(dy2 + ey1, z1)
+        y = self.output_function(dy1)
         return y
 
 # model = U_net([100,100], learning_rate=1e-1)

@@ -14,6 +14,8 @@ class DataGenerator(Dataset):
     def __init__(self, folder, size=None):
         super().__init__()
         self.folder = folder
+        if not os.path.isdir(self.folder):
+            os.mkdir(self.folder)
         if size:
             self.size = size
         else:
