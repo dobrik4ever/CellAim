@@ -8,24 +8,35 @@ from pytorch_lightning.callbacks import Callback
 
 class PlottingCallback(Callback):
 
-    def __init__(self, dataloader):
+    def __init__(self, dataloader_train, dataloader_valid):
         super().__init__()
-        self.dataloader = dataloader
+        self.dataloader_train = dataloader_train
+        self.dataloader_valid = dataloader_valid
 
     def on_train_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % 10 == 0:
-            image, label = next(iter(self.dataloader))
-            output = pl_module.forward(image.cuda())
+            images = []
+            masks = []
+            titles = ['train', 'valid']
+            for dataloader in [self.dataloader_train, self.dataloader_valid]:
+                image, _ = next(iter(dataloader))
+                image = image[:10]
+                output = pl_module.forward(image.cuda())
 
-            image_m = torchvision.utils.make_grid(image, 5)
-            output_m = torchvision.utils.make_grid(output, 5)
-            image_m = image_m.cpu().detach().numpy()[0]
-            output_m = output_m.cpu().detach().numpy()[0]
+                image_m = torchvision.utils.make_grid(image, 5)
+                output_m = torchvision.utils.make_grid(output, 5)
+                image_m = image_m.cpu().detach().numpy()[0]
+                output_m = output_m.cpu().detach().numpy()[0]
 
-            fig = plt.figure(figsize=(14,14))
-            plt.imshow(image_m, cmap='gray')
-            plt.imshow(output_m, cmap='gnuplot2', alpha=0.5)
-            plt.axis('off')
+                images.append(image_m)
+                masks.append(output_m)
+
+            fig, ax = plt.subplots(2, 1, figsize=(14,14))
+            for i, (image, mask, title) in enumerate(zip(images, masks, titles)):
+                ax[i].set_title(title)
+                ax[i].imshow(image, cmap='gray')
+                ax[i].imshow(mask, cmap='gnuplot2', alpha=0.5)
+                ax[i].axis('off')
             plt.tight_layout()
             fig.savefig(f'Cell_detection.png')
             plt.close()
@@ -107,6 +118,3 @@ class U_net(BaseModel):
         dy1 = self.dec_1(dy2 + ey1, z1)
         y = self.output_function(dy1)
         return y
-
-# model = U_net([100,100], learning_rate=1e-1)
-# model.forward(torch.rand([1,1,10,10]))
